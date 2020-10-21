@@ -4,3 +4,4 @@ Overview: Idea is to implement a matrix multiplcation for variable precision inp
 
 13th October 2020
 Initial Comments: Figured out the hierarchy of the design. Will try to capture it in the diagrams.net SVG file.   
+![Hierarchy Diagram](https://github.com/thepkd/4x4bitFusion/blob/master/564.png?raw=true)
