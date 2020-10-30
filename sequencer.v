@@ -7,11 +7,11 @@
 module sequencer(
     input               clock, reset,
     input               go,
-    output  reg         finish,
+    output              busy,
     input   [15:0]      input_word, weight_word,
-    output  [11:0]      input_read_addr,weight_read_addr, output_write_addr,
+    output  reg [11:0]      input_read_addr,weight_read_addr, output_write_addr,
     output  reg            output_write_enable,
-    output  reg [15:0]  output_write_data
+    output  reg signed [15:0]  output_write_data
      );
 
 localparam  RESET_STATE = 3'b000,
@@ -22,21 +22,21 @@ localparam  RESET_STATE = 3'b000,
             COMPUTE_SUMS_INITIATED = 3'b101;
 
 reg [15:0] I,W;
-wire signed [4:0] I0,I1,I2,I3, W0,W1,W2,W3;
-wire signed [15:0] PS0,PS1,PS2,PS3;
+reg signed [4:0] I0,I1,I2,I3,I4,I5,I6,I7, W0,W1,W2,W3,W4,W5,W6,W7;
+wire signed [15:0] PS0,PS1,PS2,PS3,PS4,PS5,PS6,PS7;
 
 reg bb0, bb1, bb2, bb3, bb4, bb5, bb6, bb7;
 reg [3:0] shiftbb0, shiftbb1, shiftbb2, shiftbb3, shiftbb4, shiftbb5, shiftbb6, shiftbb7;
 reg [1:0] servInput, servWeight;
 
-reg o0,o1,o2,o3,o4,o5;
-reg [15:0] O0,O1,O2,O3,O4,O5,O6,O7;
-reg [15:0] O0_1,O1_1,O2_1,O3_1,O4_1,O5_1,O6_1,O7_1;
+reg o0,o1,o2,o3;
+reg signed [15:0] O0,O1,O2,O3,O4,O5,O6,O7;
+reg signed [15:0] O0_1,O1_1,O2_1,O3_1,O4_1,O5_1,O6_1,O7_1;
 
 reg bb0_reg, bb1_reg, bb2_reg, bb3_reg, bb4_reg, bb5_reg, bb6_reg, bb7_reg; //Bit Brick Select registers configured at config time. THey are stable while config_done is high.
 reg [3:0] shiftbb0_reg, shiftbb1_reg, shiftbb2_reg, shiftbb3_reg, shiftbb4_reg, shiftbb5_reg, shiftbb6_reg, shiftbb7_reg;  //Bit Brick shift registers that are configure at config time. They are stable while config_done is high.
 reg [1:0] serv_inp_count, serv_weight_count; // Counters that determine when read requests are sent to the Input and weight SRAMs.
-reg [2:0] inp_counter, w_counter;
+reg [2:0] inp_counter, w_counter, inp_counter_t1, w_counter_t1, inp_counter_t2, w_counter_t2;
 reg [7:0] counter_partial, totalCount_reg, perOutIter;
 reg [3:0] totalCountShift;
 reg  config_done,config_read_done;
@@ -51,12 +51,32 @@ reg       config_read_done_sm;
 reg       config_done_sm;
 reg       clear_config;
 reg       start_counter;
+reg	  finish;
 wire   dec_total_count, next_word_in_partial, last_partial_in_set, counter_last_word_in_partial, next_weight;
 reg     write_one_output,set_done;
 
+reg	state_is_compute_init, state_is_compute_init_t1, state_is_compute_init_t2,state_is_compute_init_t3,state_is_compute_init_t4;
 //0: change state and send request to mem location 0 when you get go.
 //1: save total inputs/weights to a reg. Also store base address of current set.  
-
+always@(posedge clock)
+begin
+	if(reset)
+	begin
+		state_is_compute_init 	<= 1'b0;
+		state_is_compute_init_t1<= 1'b0;
+		state_is_compute_init_t2<= 1'b0;
+		state_is_compute_init_t3<= 1'b0;
+		state_is_compute_init_t4<= 1'b0;
+	end
+	else
+	begin
+		if(current_state_i == COMPUTE_SUMS_INITIATED) state_is_compute_init <= 1'b1; else state_is_compute_init <= 1'b0;
+		state_is_compute_init_t1 <= state_is_compute_init;
+		state_is_compute_init_t2 <= state_is_compute_init_t1;
+		state_is_compute_init_t3 <= state_is_compute_init_t2;
+		state_is_compute_init_t4 <= state_is_compute_init_t3;
+	end
+end
 
 // Registering Inputs and Weights so they can be shifted and returned in non-single-cycle reads.
 always@(posedge clock)
@@ -65,23 +85,39 @@ begin
     begin
         I <= 16'b0;
     end
-    else if(!go || finish)
+    else if(finish)
     begin
         I <= 16'b0;
     end
-    else if(current_state_i==COMPUTE_SUMS_INITIATED)
+    //else if(current_state_i==COMPUTE_SUMS_INITIATED)
+    else if(state_is_compute_init_t1)
     begin
         //Input MUXing 
-        if(inp_counter==2'b00) I <= input_word;
-        else if((servInput==2'b01)&&(inp_counter == 2'b01) I <= {I[15:8]>>4,I[7:0]>>4};
-        else if((servInput==2'b11)&&(inp_counter == 2'b01)) I <= {I[15:8]>>2,I[7:0]>>2};
-        else if((inp_counter==2'b10)) I <= {I[15:8]>>2,I[7:0]>>2};
-        else if(inp_counter==2'b11) I <= {I[15:8]>>2,I[7:0]>>2};
+        if(inp_counter_t2==2'b00) I <= input_word;
+        else if((servInput==2'b01)&&(inp_counter_t2 == 2'b01)) I <= I>>8;
+        else if((servInput==2'b11)&&(inp_counter_t2 == 2'b01)) I <= I>>4;
+        else if((inp_counter_t2==2'b10)) I <= I>>4;
+        else if(inp_counter_t2==2'b11) I <= I>>4;
         else I <= 16'hDEAD;
     end
-    else
-        I <= 16'hDEAD;
 end
+
+//Shifting Input and Weight Counters by 2 cycles;
+always @(posedge clock)
+begin
+	if(reset)
+	begin
+		inp_counter_t1 <= 2'b00; inp_counter_t2 <= 2'b00;
+		w_counter_t1 <= 2'b00; w_counter_t2 <= 2'b00;
+	end
+	else
+	begin
+		inp_counter_t1 <= inp_counter;
+		inp_counter_t2 <= inp_counter_t1;
+		w_counter_t1 <= w_counter;
+		w_counter_t2 <= w_counter_t1;
+	end
+end 
 
 // Weights MUXing.
 always@(posedge clock)
@@ -90,22 +126,20 @@ begin
     begin
         W <= 16'b0;
     end
-    else if(!go || finish)
+    else if(finish)
     begin
         W <= 16'b0;
     end
-    else if(current_state_i ==COMPUTE_SUMS_INITIATED)
+    else if(state_is_compute_init_t1)
     begin
         //Input MUXing 
-        if(inp_counter==2'b00) W <= weight_word;
-        else if((servWnput==2'b01)&&(inp_counter == 2'b01) W <= {W[15:8]>>4,W[7:0]>>4};
-        else if((servWnput==2'b11)&&(inp_counter == 2'b01)) W <= {W[15:8]>>2,W[7:0]>>2};
-        else if((inp_counter==2'b10)) W <= {W[15:8]>>2,W[7:0]>>2};
-        else if(inp_counter==2'b11) W <= {W[15:8]>>2,W[7:0]>>2};
+        if(w_counter_t2==2'b00) W <= weight_word;
+        else if((servWeight==2'b01)&&(w_counter_t2 == 2'b01)) W <= W>>8;
+        else if((servWeight==2'b11)&&(w_counter_t2 == 2'b01)) W <= W>>4;
+        else if((w_counter_t2==2'b10)) W <= W>>4;
+        else if(w_counter_t2==2'b11) W <= W>>4;
         else W <= 16'hDEAD;
     end
-    else
-        W <= 16'hDEAD;
 end
 
 // Basic State Machine switching.
@@ -128,13 +162,11 @@ begin
     RESET_STATE:
         begin
             addr_sel = 2'b00;
-            w_addr_sel = 2'b00;
             first_word_in_set = 1'b0;
             second_word_in_set = 1'b0;
             config_read_done_sm = 1'b0;
             config_done_sm = 1'b0;
             clear_config = 1'b1;
-            start_counter = 1'b0;
             if(go)
             begin
                 next_state_i = FIRST_WORD_READ;
@@ -147,67 +179,71 @@ begin
     FIRST_WORD_READ:
         begin
             addr_sel = 2'b01;
-            w_addr_sel = 2'b01;
-            first_word_in_set = 1'b1;
+            first_word_in_set = 1'b0;
             second_word_in_set = 1'b0;
             config_read_done_sm = 1'b0;
             config_done_sm = 1'b0;
             clear_config = 1'b0;
             second_word_in_set = 1'b0;
             next_state_i = SECOND_WORD_READ_FIRST_AVAILABLE;
-            start_counter = 1'b0;
         end
     SECOND_WORD_READ_FIRST_AVAILABLE:
         begin
             addr_sel = 2'b10;
-            w_addr_sel = 2'b10;
-            first_word_in_set = 1'b0;
-            second_word_in_set = 1'b1;
-            config_read_done_sm = 1'b1;
+            first_word_in_set = 1'b1;
+            second_word_in_set = 1'b0;
+            config_read_done_sm = 1'b0;
             config_done_sm = 1'b0; 
             clear_config = 1'b0;
             next_state_i = SET_CONFIG_DONE;
-            start_counter = 1'b0;
         end
     SET_CONFIG_DONE :
         begin
-            addr_sel = 2'b01;
-            w_addr_sel = 2'b01;
+            addr_sel = 2'b10;
             first_word_in_set = 1'b0;
-            second_word_in_set = 1'b0;
-            config_read_done_sm = 1'b0;
-            config_done_sm = 1'b1;
+            second_word_in_set = 1'b1;
+            config_read_done_sm = 1'b1;
+            config_done_sm = 1'b0;
             clear_config = 1'b0;
-            start_counter = 1'b0;
-            next_state_i = COMPUTE_SUMS;
+	    if(busy)
+            	next_state_i = COMPUTE_SUMS;
+	    else
+		next_state_i = RESET_STATE;
         end
     COMPUTE_SUMS:
         begin
             addr_sel = 2'b10;
-            w_addr_sel = 2'b10;
             first_word_in_set = 1'b0;
             second_word_in_set = 1'b0;
             config_read_done_sm = 1'b0;
             config_done_sm = 1'b1;
             clear_config = 1'b0;
-            start_counter = 1'b1; 
             next_state_i = COMPUTE_SUMS_INITIATED;
         end
     COMPUTE_SUMS_INITIATED:
         begin
             addr_sel = 2'b10;
-            w_addr_sel = 2'b10;
             first_word_in_set = 1'b0;
             second_word_in_set = 1'b0;
             config_read_done_sm = 1'b0;
             config_done_sm = 1'b1;
             clear_config = 1'b0;
-            start_counter = 1'b0;
             if(set_done)
-            begin
-                next_state_i = RESET_STATE;
-            end
+                next_state_i = FIRST_WORD_READ;
+	    else 
+		next_state_i = COMPUTE_SUMS_INITIATED;
+	  
         end
+     default:
+	begin
+	    addr_sel = 2'b00;
+	    config_read_done_sm = 1'b0;
+	    config_done_sm = 1'b0;
+	    first_word_in_set = 1'b0;
+	    second_word_in_set = 1'b0;
+	    clear_config = 1'b0;
+	    next_state_i = RESET_STATE;
+	end
     endcase
 end
 
@@ -218,23 +254,24 @@ begin
     begin
         counter_partial <= 8'b0;
     end
-    else if(COMPUTE_SUMS_INITIATED && start_counter)
-        counter_partial <= 8'b0;
     else if((current_state_i==COMPUTE_SUMS_INITIATED) && next_word_in_partial)
     begin
-        counter_partial <= counter_partial + 8'b1;
-        if(counter_partial == perOutIter)
+        if(counter_partial == (perOutIter))
         begin
-            counter_partial <= 8'b0;            
+            counter_partial <= 8'b1;            
         end
+	else
+	begin
+        counter_partial <= counter_partial + 8'b1;
+	end
     end
     else 
     begin
         counter_partial <= 8'b0;
     end
 end
-assign counter_last_word_in_partial = (counter_partial==(perOutIter-8'b1)) ? 1'b1 : 1'b0;
-assign dec_total_count = (counter_partial==(perOutIter-8'b1)) ? 1'b1 : 1'b0;
+assign counter_last_word_in_partial = (counter_partial==(perOutIter)) ? 1'b1 : 1'b0;
+assign dec_total_count = (counter_partial==(perOutIter)) ? 1'b1 : 1'b0;
 
 
 //Serve Input Counter
@@ -246,21 +283,21 @@ begin
     end
     else if(current_state_i == COMPUTE_SUMS_INITIATED)
     begin
-        if(start_counter)
-            inp_counter <= 8'b0;
-        else 
-        inp_counter<= inp_counter + 2'b01; 
-        if(inp_counter> serv_inp_count)
+        if(inp_counter == serv_inp_count)
         begin
             inp_counter <= 2'b00;
         end
+	else
+	begin
+        inp_counter <= inp_counter + 2'b01; 
+	end
     end
     else
     begin
         inp_counter <= 2'b00;
     end
 end
-assign next_word_in_partial = (inp_counter==serv_inp_count) ? 1'b1 : 1'b0;
+assign next_word_in_partial = (inp_counter==2'b00) ? 1'b1 : 1'b0;
 
 //Serve Weight Counter
 always@(posedge clock)
@@ -271,21 +308,21 @@ begin
     end
     else if(current_state_i == COMPUTE_SUMS_INITIATED)
     begin
-        if(start_counter)
-        w_counter <= 2'b00;
-        else
-        w_counter <= w_counter + 2'b01;
-        if(w_counter > serv_weight_count )
+        if(w_counter == serv_weight_count )
         begin
             w_counter <= 2'b00;
         end
+	else
+	begin
+        w_counter <= w_counter + 2'b01;
+	end
     end
     else 
     begin
         w_counter <= 2'b00;
     end
 end
-assign next_weight = (w_counter==serv_weight_count) ? 1'b1 : 1'b0;
+assign next_weight = (w_counter==2'b00) ? 1'b1 : 1'b0;
 
 //Set Counter Values for each configuration///////////////////////////////////////////////////////////////////////////
 always@(*)
@@ -306,32 +343,32 @@ if(current_state_i == COMPUTE_SUMS_INITIATED)
 begin
     if(last_partial_in_set && next_word_in_partial && counter_last_word_in_partial)  
     begin
-        input_read_sel = 2'b01; 
+        input_addr_sel = 2'b01; 
         set_done = 1'b1;
-        write_one_output = 1'b0;
-    end
-    else if(next_word_in_partial)
-    begin
-        input_read_sel = 2'b01;
-        set_done = 1'b0;
-        write_one_output = 1'b0;
+        write_one_output = 1'b1;
     end
     else if(counter_last_word_in_partial && next_word_in_partial)
     begin
-        input_read_sel = 2'b11;
+        input_addr_sel = 2'b11;
         write_one_output = 1'b1;
         set_done = 1'b0;
     end
+    else if(next_word_in_partial)
+    begin
+        input_addr_sel = 2'b01;
+        set_done = 1'b0;
+        write_one_output = 1'b0;
+    end
     else
     begin
-        input_read_sel = 2'b10;
+        input_addr_sel = 2'b10;
         set_done = 1'b0;
         write_one_output = 1'b0;
     end
 end
 else    
 begin
-    input_read_sel = addr_sel;
+    input_addr_sel = addr_sel;
     set_done = 1'b0;
     write_one_output = 1'b0;
 end
@@ -349,7 +386,7 @@ begin
     else if(input_addr_sel == 2'b10)
         input_read_addr <= input_read_addr;
     else if(input_addr_sel == 2'b11)
-        input_read_addr <= input_read_addr - perOutIter;
+        input_read_addr <= input_read_addr - (perOutIter-12'b1);
     else
         input_read_addr <= 12'hFFF;
 end
@@ -411,15 +448,16 @@ begin
     if(reset)
     begin
         totalCount_reg <= 8'h00;
-        finish <= 1'b0;
+        finish <= 1'b1;
     end
     else if(first_word_in_set)
     begin
+	finish <= 1'b0;
         totalCount_reg <= input_word;
         if(input_word==16'hFF)
             finish <= 1'b1;
     end
-    else if(dec_total_count)
+    else if(config_done && dec_total_count)
     begin
         totalCount_reg <= totalCount_reg - 8'b1;
     end
@@ -429,6 +467,7 @@ begin
     end
 end
 assign last_partial_in_set = (totalCount_reg==8'h01) ? 1'b1 : 1'b0;
+assign busy = !finish;
 
 //FF to store input and weight config
 always@(posedge clock)
@@ -451,6 +490,10 @@ begin
        w_config   <= 4'b0000;
        config_read_done <= 1'b0;
    end
+   else
+	begin
+		config_read_done <= 1'b0;
+	end
 end
 
 //Configuring select lines and counters based on config.
@@ -625,16 +668,21 @@ begin
         I6=$signed(I[15:12]);        W6=$signed({1'b0,W[11:8]});
         I7=$signed(I[15:12]);        W7=$signed(W[15:12]);
     end
+    default: 
+    begin
+    	I0=0;I1=0;I2=0;I3=0;I4=0;I5=0;I6=0;I7=0;
+    	W0=0;W1=0;W2=0;W3=0;W4=0;W5=0;W6=0;W7=0;
+    end
     endcase
 end
-assign PS0 = bb0_reg ? I0*W0 : 16'b0;
-assign PS1 = bb1_reg ? I1*W1 : 16'b0;
-assign PS2 = bb2_reg ? I2*W2 : 16'b0;
-assign PS3 = bb3_reg ? I3*W3 : 16'b0;
-assign PS4 = bb4_reg ? I4*W4 : 16'b0;
-assign PS5 = bb5_reg ? I5*W5 : 16'b0;
-assign PS6 = bb6_reg ? I6*W6 : 16'b0;
-assign PS7 = bb7_reg ? I7*W7 : 16'b0;
+assign PS0 = bb0_reg ? I0*W0 : $signed(16'b0);
+assign PS1 = bb1_reg ? I1*W1 : $signed(16'b0);
+assign PS2 = bb2_reg ? I2*W2 : $signed(16'b0);
+assign PS3 = bb3_reg ? I3*W3 : $signed(16'b0);
+assign PS4 = bb4_reg ? I4*W4 : $signed(16'b0);
+assign PS5 = bb5_reg ? I5*W5 : $signed(16'b0);
+assign PS6 = bb6_reg ? I6*W6 : $signed(16'b0);
+assign PS7 = bb7_reg ? I7*W7 : $signed(16'b0);
 ///////End of Input and Weights Muxing to respective 4x4 bit brick blocks. /////////////////////////////////////////////////////////////////////
 
 always@(posedge clock)
@@ -658,7 +706,7 @@ begin
         O6_1 <= 16'b0;
         O7_1 <= 16'b0;
     end
-    else if(current_state_i == COMPUTE_SUMS_INITIATED)
+    else if(state_is_compute_init_t2)
     begin
         O0 <= PS0;
         O1 <= PS1;
@@ -675,7 +723,18 @@ begin
         O4_1 <= O4<<shiftbb4_reg;
         O5_1 <= O5<<shiftbb5_reg;
         O6_1 <= O6<<shiftbb6_reg;
-        O7_1 <= O6<<shiftbb7_reg;
+        O7_1 <= O7<<shiftbb7_reg;
+    end
+    else
+    begin
+	O0 <= 16'b0;
+        O1 <= 16'b0;
+        O2 <= 16'b0;
+        O3 <= 16'b0;
+        O4 <= 16'b0;
+        O5 <= 16'b0;
+        O6 <= 16'b0;
+        O7 <= 16'b0;
     end
 end
 
@@ -687,13 +746,26 @@ begin
         output_write_data <= 16'b0;
         output_write_addr <= 12'b0;
     end
-    else if(set_done)
-    begin
-        output_write_data <= 16'b0;
-    end
     else
     begin
-        output_write_data <= O0_1 + O1_1 + O2_1 + O3_1 + O4_1 + O5_1 + O6_1 + O7_1;
+	if(~state_is_compute_init_t4 && finish)
+	begin
+		output_write_addr <= 12'b0;
+		output_write_data <= 16'b0;
+	end
+	else if(~state_is_compute_init_t4)
+	begin
+	output_write_data <= 16'b0;
+	//output_write_addr <= 12'b0;
+	end
+	else if(output_write_enable)
+	begin
+		output_write_data <= O0_1 + O1_1 + O2_1 + O3_1 + O4_1 + O5_1 + O6_1 + O7_1;
+		output_write_addr <= output_write_addr + 12'b1;
+	end
+	else
+        output_write_data <= output_write_data + O0_1 + O1_1 + O2_1 + O3_1 + O4_1 + O5_1 + O6_1 + O7_1;
+	
     end
 end
 
@@ -701,18 +773,19 @@ end
 always@(posedge clock)
 begin
     if(reset)
+    begin
+        
         output_write_enable <= 1'b0;
-        o0 <= 1'b0; o1 <= 1'b0; o2 <= 1'b0; o3 <= 1'b0; o4 <=1'b0; o5 <= 1'b0; o6 <= 1'b0;
+        o0 <= 1'b0; o1 <= 1'b0; o2 <= 1'b0; o3 <= 1'b0; 
+    end
     else
-        begin
-            o0 <= write_one_output;
-            o1 <= o0;
-            o2 <= o1;
-            o3 <= o2;
-            o4 <= o3;
-            o5 <= o4;
-            output_write_enable <= o5;
-        end
+    begin
+        o0 <= write_one_output;
+        o1 <= o0;
+        o2 <= o1;
+        o3 <= o2;
+        output_write_enable <= o3;
+    end
 
 end
 endmodule
