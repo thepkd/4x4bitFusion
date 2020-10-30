@@ -1,8 +1,6 @@
 // Module: sequencer: Sequences the inputs to the Fusion PEs based on the configuration read from the SRAM mem blocks. 
-//       : 4x4bitBrick: Module name can be a misnomer because it is actually a 5x5 signed multiply. But for the sake of conceptual understanding
-//                      it is maintained like this. That is, it handles the [3:0],[7:4](4 bits each) part of an 8 bit value.
-//                      Just multiplies them and returns output in registers considering multiplication itself will have a high logic delay and 
-//                      i would like to pipeline the shifting in the module which feeds from this
+//       : 		It is actually an array of  5x5 signed multiplies. It handles the [3:0],[7:4](4 bits each) part of an 8 bit value. Bigger bit widths are broken	down into 5 bit signed values and the results of individual multiplies are shifted according to  the config. 
+//                      Considering multiplication itself will have a high logic delay I pipeline the shifting in the module which feeds from this
 // Author: kputrev@ncsu.edu
 module sequencer(
     input               clock, reset,
